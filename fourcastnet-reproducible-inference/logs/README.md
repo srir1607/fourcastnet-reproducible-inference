@@ -1,0 +1,1 @@
+Slurm stdout/stderr (`slurm-<jobid>.out/.err`) and `download_manifest.txt` land here automatically. Commit the real files from your actual run; this placeholder is only here so the empty directory survives a git clone.

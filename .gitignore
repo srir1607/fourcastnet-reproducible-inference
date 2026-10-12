@@ -1,0 +1,5 @@
+*.ckpt
+*.h5
+*.npy
+__pycache__/
+FourCastNet/
