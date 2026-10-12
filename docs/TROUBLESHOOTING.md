@@ -13,7 +13,11 @@
 
 Job-script pitfalls found by review before the first submission (fixed in `slurm/run_inference.sbatch`): `$0` inside a Slurm job is a spool copy, so paths come from `$SLURM_SUBMIT_DIR`; relative `#SBATCH --output` is relative to the submit directory, so submit from the repo root; `set -u` breaks `conda activate`.
 
-Add any further incidents from the real `sbatch` run here.
+Findings from the first real run (job 6205007, 1 min 35 s, completed):
+
+- Peak GPU memory was 11,292 MiB, not the 2 to 4 GB estimated in the Model Selection Report. The likely cause is that the run keeps the full predicted and ground-truth fields in memory for saving (the output file is 6.6 GB), which the estimate did not account for; this was not profiled. It fits on a 16 GB V100 but may not fit on a smaller card. The output file is 6.6 GB.
+- The first version of the job script copied the 6.6 GB prediction file into `outputs/`. It now stays on scratch and a small CSV of Z500 skill is committed instead.
+- `git pull` on ICE refused to merge because the ICE copy of the job script had a local account edit. Fixed with `git checkout -- slurm/run_inference.sbatch` (the repo version already contains `--account=coc`).
 
 ## Known risks
 
@@ -22,7 +26,7 @@ Add any further incidents from the real `sbatch` run here.
 - **Numerical differences:** different GPUs and cuFFT versions will not reproduce the paper to the digit. Compare curve shape.
 - **Job limits:** PACE-ICE caps roughly 50 GPU jobs and 32 GPU-hours per user; this run uses well under an hour.
 - **Old Docker base image:** the official image predates Hopper GPUs, which is why the environment pins newer wheels (`environment/VERSION_NOTES.md`).
-- **Unverified before the first run:** the exact array layout `inference.py` writes (validate.py detects it and prints it) and the `--vis` option's memory use.
+- **GPU memory:** about 11.3 GiB peak with `--vis`; request a GPU with at least 16 GB.
 
 ## Cleanup
 

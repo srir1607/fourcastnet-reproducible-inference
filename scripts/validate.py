@@ -65,6 +65,8 @@ def main():
     ap.add_argument("--run-dir", required=True)
     ap.add_argument("--z500-channel", type=int, default=Z500_CHANNEL)
     ap.add_argument("--plot-out", default=None)
+    ap.add_argument("--csv-out", default=None,
+                    help="Write Z500 lead-time/ACC/RMSE to this small CSV (committed as evidence)")
     args = ap.parse_args()
 
     # ---- smoke test ----
@@ -143,10 +145,27 @@ def main():
         check(False, "", f"run too short to evaluate 24 h skill (only {n} steps)")
 
     print("\nZ500 skill summary (lead hours: ACC / RMSE):")
-    for h in (24, 48, 72, 120, 240):
+    for h in (24, 48, 72, 120, 168):
         j = idx(h)
         if 0 <= j < n:
             print(f"  {h:>4d} h: ACC={acc[j]:.4f}  RMSE={rmse[j]:.2f}")
+    print(f"  {lead_hours[-1]:>4d} h (last): ACC={acc[-1]:.4f}  RMSE={rmse[-1]:.2f}")
+
+    below = [i for i in range(n) if acc[i] < ACC_USEFUL]
+    if below:
+        j = below[0]
+        print(f"  Z500 ACC first drops below {ACC_USEFUL} at lead {lead_hours[j]} h "
+              f"({lead_hours[j] / 24:.2f} days); last value before: {acc[j - 1]:.4f}" if j > 0 else
+              f"  Z500 ACC is already below {ACC_USEFUL} at the first step")
+    else:
+        print(f"  Z500 ACC stays above {ACC_USEFUL} for the whole {lead_hours[-1]} h run")
+
+    if args.csv_out:
+        with open(args.csv_out, "w") as fh:
+            fh.write("lead_hours,z500_acc,z500_rmse\n")
+            for h, a_, r_ in zip(lead_hours, acc, rmse):
+                fh.write(f"{h},{a_:.6f},{r_:.6f}\n")
+        print(f"Saved CSV: {args.csv_out}")
 
     # ---- plot ----
     out_png = args.plot_out or os.path.join(args.run_dir, "skill_vs_leadtime.png")

@@ -8,6 +8,7 @@ Single-GPU inference with FourCastNet (NVIDIA's AFNO-based global weather model)
 
 - **What is reproduced:** one autoregressive rollout of the pretrained backbone, initialized at index 0 of the released out-of-sample 2018 ERA5 file, run for 40 six-hour states (10 days), scored against ERA5 for 20 channels. Z500 (channel 14) is the headline variable.
 - **What is not:** this is a single-initialization sanity reproduction, not the paper's multi-initialization average, so numbers will be noisier than the paper's Figures 3/4. Compare curve shape, not digits. Training, the precipitation model, and the HuggingFace 26-channel release are out of scope (`docs/PROVENANCE.md`).
+- **Compute needed:** one GPU with at least 16 GB (measured peak 11.3 GiB with `--vis`), 64 GB host RAM requested (21.7 GB used), about 95 s wall time on a V100.
 - **Known limits of the evaluation file:** it holds 40 time steps, so the repo's default 41-step rollout would run off the end; `scripts/configure_paths.py` sets `prediction_length` from the file. The calendar dates of those 40 steps were not verified.
 - **Status:** see the checklist at the bottom. Items are only ticked once real logs are committed.
 
@@ -74,14 +75,15 @@ Connect to the GT VPN, then `ssh <gt-username>@login-ice.pace.gatech.edu`.
    sbatch slurm/run_inference.sbatch
    squeue -u $USER
    ```
-   The job patches `config/AFNO.yaml` (diff saved to `logs/config_patch.diff`), samples GPU memory to `logs/gpu_usage_<jobid>.csv`, runs `inference/inference.py --config=afno_backbone --run_num=0 --vis`, then runs `scripts/validate.py`. Logs: `logs/slurm-<jobid>.out/.err`. Plot: `outputs/skill_vs_leadtime.png`. The job exits non-zero if validation fails.
+   The job patches `config/AFNO.yaml` (diff saved to `logs/config_patch.diff`), samples GPU memory to `logs/gpu_usage_<jobid>.csv`, runs `inference/inference.py --config=afno_backbone --run_num=0 --vis`, then runs `scripts/validate.py`. Logs: `logs/slurm-<jobid>.out/.err`. Evidence: `outputs/skill_vs_leadtime.png`, `outputs/z500_skill_<jobid>.csv`, `logs/inference_out_<jobid>.log`. The 6.6 GB prediction file stays on scratch. The job exits non-zero if validation fails.
 
 ## Validation
 
 `scripts/validate.py` (also runnable alone: `python scripts/validate.py --run-dir ~/scratch/fcn-run-<jobid>`):
 
 - Smoke: output HDF5 exists, has `rmse`/`acc`, finite and non-empty.
-- Substantive: ACC within [-1, 1], RMSE >= 0; ACC at lead 0 near 1 (confirms the first state is the initial condition); Z500 ACC at 24 h >= 0.6 (conventional useful-forecast threshold); ACC falls and RMSE rises with lead time.
+- Substantive: ACC within [-1, 1], RMSE >= 0; ACC at lead 0 near 1 (confirms the first state is the initial condition); Z500 ACC at 24 h >= 0.6 (conventional useful-forecast threshold); ACC falls and RMSE rises with lead time. It also reports the lead time at which Z500 ACC first drops below 0.6.
+- Repeatability: `python scripts/compare_runs.py outputs/z500_skill_A.csv outputs/z500_skill_B.csv` compares two runs.
 
 Measured numbers and interpretation go in `docs/VALIDATION.md`.
 
@@ -94,8 +96,9 @@ Measured numbers and interpretation go in `docs/VALIDATION.md`.
 - [x] Environment built and verified (torch 2.2.2+cu121)
 - [x] Artifacts downloaded and checksummed (`docs/CHECKSUMS.sha256`)
 - [x] Evaluation file shape measured: (40, 21, 721, 1440) float32
-- [ ] Smoke test output saved
-- [ ] CUDA check on GPU node
-- [ ] `sbatch` run completed, logs committed to `logs/`
-- [ ] `docs/VALIDATION.md` filled with measured numbers
-- [ ] FourCastNet commit hash recorded in `docs/PROVENANCE.md`
+- [x] Smoke test passed (`logs/smoke_test.txt`)
+- [x] CUDA check on a GPU node (`logs/cuda_check.txt`: Tesla V100-PCIE-16GB)
+- [x] `sbatch` run completed: job 6205007, exit 0, validation passed (`logs/slurm-6205007.out`)
+- [x] `docs/VALIDATION.md` filled with measured numbers
+- [x] FourCastNet commit hash recorded in `docs/PROVENANCE.md`
+- [ ] Repeat run and `scripts/compare_runs.py` result recorded in `docs/VALIDATION.md`

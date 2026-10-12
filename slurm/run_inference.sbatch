@@ -75,10 +75,12 @@ ls -la "$OUTPUT_DIR"
 
 echo "=== Validation ==="
 set +e
-python "$REPO/scripts/validate.py" --run-dir "$OUTPUT_DIR" --plot-out "$REPO/outputs/skill_vs_leadtime.png"
+python "$REPO/scripts/validate.py" --run-dir "$OUTPUT_DIR" --plot-out "$REPO/outputs/skill_vs_leadtime.png" \
+  --csv-out "$REPO/outputs/z500_skill_$SLURM_JOB_ID.csv"
 RC=$?
 set -e
 
-cp "$OUTPUT_DIR"/autoregressive_predictions*.h5 "$REPO/outputs/" 2>/dev/null || true
+cp "$OUTPUT_DIR/inference_out.log" "$REPO/logs/inference_out_$SLURM_JOB_ID.log" 2>/dev/null || true
+# The prediction .h5 is ~6.6 GB (it stores predicted and ground-truth fields); it stays on scratch.
 echo "=== Done (validation exit code $RC) at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 exit $RC

@@ -10,7 +10,7 @@ Every artifact this workflow depends on, with source and version.
 ## Code
 
 - Repository: https://github.com/NVlabs/FourCastNet (BSD 3-Clause)
-- **Commit used:** `<FILL IN: output of git -C ~/FourCastNet rev-parse HEAD>` (also printed at the top of every Slurm log)
+- **Commit used:** `93360c1720a9f97aabf970689f21c9fad8737788` (also printed at the top of every Slurm log)
 - Scripts used: `inference/inference.py`, `config/AFNO.yaml` (section `afno_backbone`, patched by `scripts/configure_paths.py`; diff in `logs/config_patch.diff`)
 - Behaviors of `inference.py` that shaped this workflow: scores field `z500` only; uses `--vis` to run a single initial condition; imports `numpy.core.numeric.False_` (needs numpy<2); calls `torch.load` without `weights_only` (needs torch<2.6).
 
@@ -27,7 +27,8 @@ Every artifact this workflow depends on, with source and version.
 ## Software environment
 
 - PACE-ICE, `module load miniforge`, conda env `fourcastnet-inference` on scratch. Spec: `environment/environment.yml`; rationale: `environment/VERSION_NOTES.md`.
-- Verified: Python 3.10, torch 2.2.2+cu121.
+- Verified: Python 3.10, torch 2.2.2+cu121, numpy 1.26.4.
+- Hardware used for the recorded run: Tesla V100-PCIE-16GB (16,384 MiB), driver 580.178.04, node `atl1-1-02-011-31-0`, account `coc`, partition `ice-gpu`, QOS `coc-ice`.
 
 ## Out of scope
 

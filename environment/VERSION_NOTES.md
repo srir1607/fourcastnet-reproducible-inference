@@ -1,6 +1,6 @@
 # Why these versions, not the original Docker image's
 
-The official FourCastNet repo ships a Dockerfile built on `nvcr.io/nvidia/pytorch:21.11-py3`, which bundles an old PyTorch/CUDA pairing. That image predates Hopper-generation GPUs (H200), so it does not include GPU kernels built for `sm_90`. Running it as-is on an H200 node would either fail outright or silently fall back to an unsupported compute mode.
+The official FourCastNet repo ships a Dockerfile built on `nvcr.io/nvidia/pytorch:21.11-py3`, which bundles an old PyTorch/CUDA pairing. That image predates Hopper-generation GPUs (H200), so it does not include GPU kernels built for `sm_90`. The recorded run landed on a Tesla V100 (`sm_70`), which the pinned wheels also support; the newer pins keep the environment usable on whichever GPU type the scheduler assigns.
 
 `environment.yml` instead pins modern versions (PyTorch 2.2.2 with CUDA 12.1 wheels) that do support H200, while keeping the same package set the original image installs (h5py, timm, einops, ruamel.yaml, tqdm, wandb) since `inference/inference.py` imports all of them directly.
 
