@@ -2,7 +2,7 @@
 
 Sri Ravela | Reproducible Inference Assignment
 
-Single-GPU inference with FourCastNet (NVIDIA's AFNO-based global weather model) on PACE-ICE, with validation of the output and a documented chain from artifact download to result. It builds on the Model Selection Report and GitHub issue from the previous assignment: [PASTE ISSUE URL HERE].
+Single-GPU inference with FourCastNet (NVIDIA's AFNO-based global weather model) on PACE-ICE, with validation of the output and a documented chain from artifact download to result. It builds on the Model Selection Report and GitHub issue from the previous assignment: https://github.com/cyber-shuttle/cybershuttle-ai4science-foundry/issues/24.
 
 ## Scope
 
