@@ -1,1 +1,1 @@
-Slurm stdout/stderr (`slurm-<jobid>.out/.err`) and `download_manifest.txt` land here automatically. Commit the real files from your actual run; this placeholder is only here so the empty directory survives a git clone.
+This folder holds the evidence from my real runs: the Slurm stdout and stderr for each job, the checksum manifest from the download, the smoke test and CUDA check output, the config diff, GPU memory samples, and the inference logs.

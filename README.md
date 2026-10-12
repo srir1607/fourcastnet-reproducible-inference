@@ -2,41 +2,45 @@
 
 Sri Ravela | Reproducible Inference Assignment
 
-Single-GPU inference with FourCastNet (NVIDIA's AFNO-based global weather model) on PACE-ICE, with validation of the output and a documented chain from artifact download to result. It builds on the Model Selection Report and GitHub issue from the previous assignment: https://github.com/cyber-shuttle/cybershuttle-ai4science-foundry/issues/24.
+This repo runs single-GPU inference with FourCastNet, NVIDIA's AFNO-based global weather model, on PACE-ICE. It scores the output against ERA5 ground truth and documents every step from artifact download to result. It follows from my Model Selection Report and my GitHub issue: https://github.com/cyber-shuttle/cybershuttle-ai4science-foundry/issues/24
 
-## Scope
+## What I reproduced
 
-- **What is reproduced:** one autoregressive rollout of the pretrained backbone, initialized at index 0 of the released out-of-sample 2018 ERA5 file, run for 40 six-hour states (10 days), scored against ERA5 for 20 channels. Z500 (channel 14) is the headline variable.
-- **What is not:** this is a single-initialization sanity reproduction, not the paper's multi-initialization average, so numbers will be noisier than the paper's Figure 7(a). Compare curve shape, not digits. Training, the precipitation model, and the HuggingFace 26-channel release are out of scope (`docs/PROVENANCE.md`).
-- **Compute needed:** one GPU with at least 16 GB (measured peak 11.3 GiB with `--vis`), 64 GB host RAM requested (21.7 GB used), about 95 s wall time on a V100.
-- **Known limits of the evaluation file:** it holds 40 time steps, so the repo's default 41-step rollout would run off the end; `scripts/configure_paths.py` sets `prediction_length` from the file. The calendar dates of those 40 steps were not verified.
-- **Status:** see the checklist at the bottom. Items are only ticked once real logs are committed.
+I ran one autoregressive rollout of the pretrained backbone. It starts at the first time step of the released out-of-sample 2018 ERA5 file and runs 40 six-hour steps, which covers 10 days. The model scores 20 channels, and Z500 (channel 14) is the headline variable. My issue also proposed T850, but `inference.py` only scores Z500, so T850 is left out.
+
+For Z500, ACC is 0.995 at 24 hours and 0.981 at 48 hours, and it crosses 0.6 at about 170 hours. That agrees with Figure 7(a) of the paper through about 2 days. Beyond about 4 days my curve falls below the paper's average, and I couldn't settle why. One initialization against the paper's average over many could explain it, but the demo bundle holds a single 10-day window, so I had no way to test that. Two runs on the same GPU gave identical numbers. The full record is in `docs/VALIDATION.md`.
+
+With a single initialization, my numbers are noisier than an average over many, so I treat this as a sanity reproduction of the pipeline. Training, the precipitation model, and the HuggingFace 26-channel release are out of scope (see `docs/PROVENANCE.md`).
+
+## What it takes to run
+
+The job needs one GPU with at least 16 GB. Peak GPU memory was 11.3 GiB with `--vis`, host RAM used was 21.7 GB (I requested 64 GB), and the job took about 95 seconds on a V100. The evaluation file holds 40 time steps, so the repo's default 41-step rollout would run off the end. `scripts/configure_paths.py` sets `prediction_length` from the file to avoid that. I didn't verify the calendar dates of those 40 steps.
 
 ## Repo layout
 
 ```
-environment/   conda spec + notes on why versions differ from the official Dockerfile
-scripts/       download, config patching, smoke test, validation
+environment/   conda spec, and notes on why versions differ from the official Dockerfile
+scripts/       download, config patching, smoke test, validation, run comparison
 slurm/         the job script
-docs/          provenance, checksums, validation record, troubleshooting + cleanup
-logs/          download manifest, Slurm stdout/stderr, config diff, GPU usage samples
-outputs/       skill plot from the real run
+docs/          provenance, checksums, validation record, troubleshooting and cleanup
+logs/          download manifest, Slurm stdout and stderr, config diff, GPU usage samples
+outputs/       skill plot and Z500 skill CSVs from the real runs
 ```
 
 ## Reproduction steps (PACE-ICE)
 
 Connect to the GT VPN, then `ssh <gt-username>@login-ice.pace.gatech.edu`.
 
-0. **Find your account.** `sacctmgr show associations user=$USER format=account,qos,partition` and put the account in `slurm/run_inference.sbatch` (`--account=`). This run used `coc` with partition `ice-gpu`.
+0. **Find your account.** Run `sacctmgr show associations user=$USER format=account,qos,partition` and put the account in `slurm/run_inference.sbatch` (`--account=`). I used `coc` with partition `ice-gpu`.
 
-1. **Clone both repos** (home is small, so put this repo on scratch):
+1. **Clone both repos.** Home space is small, so this repo goes on scratch:
    ```
    git clone https://github.com/NVlabs/FourCastNet.git ~/FourCastNet
    git -C ~/FourCastNet rev-parse HEAD            # record in docs/PROVENANCE.md
    git clone https://github.com/srir1607/fourcastnet-reproducible-inference.git ~/scratch/fcn-repro
    ```
 
-2. **Create the environment on scratch.** Home quota is about 30 GB and fills quickly; `~/.condarc` must contain valid YAML:
+2. **Create the environment on scratch.** The home quota is about 30 GB and fills quickly. `~/.condarc` has to contain valid YAML:
    ```
    envs_dirs:
      - ~/scratch/.conda/envs
@@ -48,20 +52,20 @@ Connect to the GT VPN, then `ssh <gt-username>@login-ice.pace.gatech.edu`.
    conda activate fourcastnet-inference
    python -c "import torch; print(torch.__version__)"      # 2.2.2+cu121
    ```
-   Pins and rationale: `environment/environment.yml`, `environment/VERSION_NOTES.md`. In particular `numpy<2` and `torch<2.6` are required by `inference.py`.
+   The pins and my reasons for them are in `environment/environment.yml` and `environment/VERSION_NOTES.md`. In particular, `inference.py` needs `numpy<2` and `torch<2.6`.
 
-3. **Download and verify artifacts** (about 4 GB, plain HTTPS, no Globus):
+3. **Download and verify the artifacts.** This is about 4 GB over plain HTTPS, and it needs no Globus account:
    ```
    ./scripts/download_artifacts.sh ~/scratch/fcn-artifacts
    ```
-   This resumes with `wget -c`, extracts, and checks every file against `docs/CHECKSUMS.sha256`, writing `logs/download_manifest.txt`. If the login node kills the transfer (exit 137), run the same script inside `srun --account=<acct> --partition=ice-gpu --gres=gpu:1 --time=01:00:00 --pty bash`.
+   The script resumes with `wget -c`, extracts the archive, and checks every file against `docs/CHECKSUMS.sha256`, writing `logs/download_manifest.txt`. If the login node kills the transfer (exit code 137), run the same script inside `srun --account=<acct> --partition=ice-gpu --gres=gpu:1 --time=01:00:00 --pty bash`.
 
-4. **Smoke test** (login node; no CUDA is expected there):
+4. **Run the smoke test** on the login node. It reports no CUDA device there, which is expected:
    ```
    python scripts/smoke_test.py --fourcastnet-repo ~/FourCastNet --artifact-root ~/scratch/fcn-artifacts
    ```
 
-5. **CUDA check on a GPU node:**
+5. **Check CUDA on a GPU node:**
    ```
    srun --account=<acct> --partition=ice-gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=00:15:00 --pty bash
    conda activate fourcastnet-inference
@@ -69,27 +73,28 @@ Connect to the GT VPN, then `ssh <gt-username>@login-ice.pace.gatech.edu`.
    exit
    ```
 
-6. **Submit from the repo root** (paths in the script depend on this):
+6. **Submit from the repo root.** The paths in the script depend on that:
    ```
    cd ~/scratch/fcn-repro
    sbatch slurm/run_inference.sbatch
    squeue -u $USER
    ```
-   The job patches `config/AFNO.yaml` (diff saved to `logs/config_patch.diff`), samples GPU memory to `logs/gpu_usage_<jobid>.csv`, runs `inference/inference.py --config=afno_backbone --run_num=0 --vis`, then runs `scripts/validate.py`. Logs: `logs/slurm-<jobid>.out/.err`. Evidence: `outputs/skill_vs_leadtime.png`, `outputs/z500_skill_<jobid>.csv`, `logs/inference_out_<jobid>.log`. The 6.6 GB prediction file stays on scratch. The job exits non-zero if validation fails.
+   The job patches `config/AFNO.yaml` and saves the diff to `logs/config_patch.diff`. It samples GPU memory into `logs/gpu_usage_<jobid>.csv`, runs `inference/inference.py --config=afno_backbone --run_num=0 --vis`, and then runs `scripts/validate.py`. The logs are `logs/slurm-<jobid>.out` and `.err`. The evidence files are `outputs/skill_vs_leadtime.png`, `outputs/z500_skill_<jobid>.csv` and `logs/inference_out_<jobid>.log`. The 6.6 GB prediction file stays on scratch, and the job exits with a non-zero code if validation fails.
 
 ## Validation
 
-`scripts/validate.py` (also runnable alone: `python scripts/validate.py --run-dir ~/scratch/fcn-run-<jobid>`):
+`scripts/validate.py` runs at the end of the job and can also run alone with `python scripts/validate.py --run-dir ~/scratch/fcn-run-<jobid>`. The smoke checks confirm that the output HDF5 exists, holds `rmse` and `acc`, and contains finite values. The substantive checks cover these points:
 
-- Smoke: output HDF5 exists, has `rmse`/`acc`, finite and non-empty.
-- Substantive: ACC within [-1, 1], RMSE >= 0; ACC at lead 0 near 1 (confirms the first state is the initial condition); Z500 ACC at 24 h >= 0.6 (conventional useful-forecast threshold); ACC falls and RMSE rises with lead time. It also reports the lead time at which Z500 ACC first drops below 0.6.
-- Repeatability: `python scripts/compare_runs.py outputs/z500_skill_A.csv outputs/z500_skill_B.csv` compares two runs.
+- ACC stays within [-1, 1] and RMSE stays at or above 0.
+- ACC at lead 0 is near 1, which confirms the first state is the initial condition.
+- Z500 ACC at 24 hours reaches at least 0.6, the usual threshold for a useful forecast.
+- ACC falls and RMSE rises with lead time.
 
-Measured numbers and interpretation go in `docs/VALIDATION.md`.
+The script also reports the lead time where Z500 ACC first drops below 0.6. To compare two runs, use `python scripts/compare_runs.py outputs/z500_skill_<jobidA>.csv outputs/z500_skill_<jobidB>.csv`. My measured numbers and what I make of them are in `docs/VALIDATION.md`.
 
 ## Troubleshooting and cleanup
 
-`docs/TROUBLESHOOTING.md` has the incidents hit while building this (with fixes) and the cleanup steps.
+`docs/TROUBLESHOOTING.md` lists the problems I hit while building this, with the fix for each, and the cleanup steps.
 
 ## Status checklist
 
@@ -101,4 +106,4 @@ Measured numbers and interpretation go in `docs/VALIDATION.md`.
 - [x] `sbatch` run completed: job 6205007, exit 0, validation passed (`logs/slurm-6205007.out`)
 - [x] `docs/VALIDATION.md` filled with measured numbers
 - [x] FourCastNet commit hash recorded in `docs/PROVENANCE.md`
-- [x] Repeat run and `scripts/compare_runs.py` result recorded in `docs/VALIDATION.md`
+- [x] Repeat run (job 6205661) compared with `scripts/compare_runs.py`, recorded in `docs/VALIDATION.md`
