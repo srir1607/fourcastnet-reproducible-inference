@@ -101,4 +101,4 @@ Measured numbers and interpretation go in `docs/VALIDATION.md`.
 - [x] `sbatch` run completed: job 6205007, exit 0, validation passed (`logs/slurm-6205007.out`)
 - [x] `docs/VALIDATION.md` filled with measured numbers
 - [x] FourCastNet commit hash recorded in `docs/PROVENANCE.md`
-- [ ] Repeat run and `scripts/compare_runs.py` result recorded in `docs/VALIDATION.md`
+- [x] Repeat run and `scripts/compare_runs.py` result recorded in `docs/VALIDATION.md`
