@@ -1,51 +1,44 @@
 #!/usr/bin/env bash
-# Downloads the FourCastNet backbone checkpoint, normalization stats, and the
-# out-of-sample 2018 ERA5 evaluation file from the NERSC Globus endpoint.
+# Downloads the FourCastNet demo bundle (pretrained backbone weights, normalization
+# statistics, and a small out-of-sample 2018 ERA5 evaluation file) from NERSC over
+# plain HTTPS, extracts it, and verifies every file against docs/CHECKSUMS.sha256.
+# No Globus account is needed for this bundle.
 #
-# Requires: a Globus account (free, https://www.globus.org) and the Globus CLI
-# (`pip install globus-cli`, then `globus login` once interactively before
-# running this script for the first time — that step needs a browser and
-# can't be scripted).
+# Usage: ./scripts/download_artifacts.sh [ARTIFACT_ROOT]
+#   default ARTIFACT_ROOT: $HOME/scratch/fcn-artifacts
 #
-# Usage: ./download_artifacts.sh /path/to/artifacts/root
+# The download is resumable (wget -c). If the login node kills the transfer
+# (exit code 137, see docs/TROUBLESHOOTING.md), run this inside an interactive
+# `srun` session instead and re-run it to resume.
 
 set -euo pipefail
 
-ARTIFACT_ROOT="${1:?Usage: ./download_artifacts.sh /path/to/artifacts/root}"
-mkdir -p "$ARTIFACT_ROOT"/{weights,stats,out_of_sample}
+ARTIFACT_ROOT="${1:-$HOME/scratch/fcn-artifacts}"
+URL="https://portal.nersc.gov/project/m4134/ccai_demo.tar"
+EXPECTED_BYTES=3998497644
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# NERSC Globus endpoint hosting FCN_weights_v0 (weights + stats + out-of-sample data).
-# Confirm this endpoint ID against https://portal.nersc.gov/project/m4134/FCN_weights_v0/
-# before running -- Globus endpoint IDs occasionally change when NERSC migrates hosting.
-NERSC_ENDPOINT_ID="9d6d99eb-6d04-11e5-ba46-22000b92c6ec"  # NERSC DTN, verify at portal link above
-LOCAL_ENDPOINT_ID="$(globus endpoint local-id 2>/dev/null || true)"
+mkdir -p "$ARTIFACT_ROOT"
+cd "$ARTIFACT_ROOT"
 
-if [ -z "$LOCAL_ENDPOINT_ID" ]; then
-  echo "No local Globus Connect Personal endpoint found."
-  echo "On a Slurm cluster, use the cluster's Globus Collection (ask PACE-ICE docs/admins"
-  echo "for its collection name) instead of a personal endpoint, and substitute it below."
+echo "Downloading (resumable) from $URL ..."
+wget -c -O ccai_demo.tar "$URL"
+
+actual=$(stat -c %s ccai_demo.tar)
+if [ "$actual" -ne "$EXPECTED_BYTES" ]; then
+  echo "ERROR: ccai_demo.tar is $actual bytes, expected $EXPECTED_BYTES. Re-run to resume." >&2
   exit 1
 fi
 
-echo "Transferring weights..."
-globus transfer "$NERSC_ENDPOINT_ID:/FCN_weights_v0/backbone.ckpt" \
-  "$LOCAL_ENDPOINT_ID:$ARTIFACT_ROOT/weights/backbone.ckpt" --label "fcn-backbone-ckpt"
+echo "Extracting ..."
+tar -xzf ccai_demo.tar
 
-echo "Transferring normalization stats..."
-for f in global_means.npy global_stds.npy time_means.npy land_sea_mask.npy latitude.npy longitude.npy; do
-  globus transfer "$NERSC_ENDPOINT_ID:/stats_v0/$f" "$LOCAL_ENDPOINT_ID:$ARTIFACT_ROOT/stats/$f" --label "fcn-stats-$f"
-done
-
-echo "Transferring out-of-sample 2018 evaluation data..."
-globus transfer "$NERSC_ENDPOINT_ID:/out_of_sample/2018.h5" \
-  "$LOCAL_ENDPOINT_ID:$ARTIFACT_ROOT/out_of_sample/2018.h5" --label "fcn-2018-eval"
-
-echo "Transfers queued. Check status with: globus task list"
-echo "Once complete, record file sizes for the integrity check:"
-mkdir -p ../logs
+echo "Verifying checksums against docs/CHECKSUMS.sha256 ..."
+mkdir -p "$REPO_DIR/logs"
 {
-  echo "# Download manifest -- generated $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  find "$ARTIFACT_ROOT" -type f -exec ls -la {} \;
-} > ../logs/download_manifest.txt
-echo "Manifest written to logs/download_manifest.txt (sizes only queued until transfers finish --"
-echo "re-run the find/ls block once 'globus task list' shows all tasks as SUCCEEDED)."
+  echo "# Download manifest, generated $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "# Source: $URL"
+  sha256sum -c "$REPO_DIR/docs/CHECKSUMS.sha256"
+} | tee "$REPO_DIR/logs/download_manifest.txt"
+
+echo "Done. Artifacts are under $ARTIFACT_ROOT/ccai_demo"

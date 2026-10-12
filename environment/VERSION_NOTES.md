@@ -9,3 +9,9 @@ The official FourCastNet repo ships a Dockerfile built on `nvcr.io/nvidia/pytorc
 **What to verify on first run:** `torchvision.utils.save_image` is imported but only used for debug visualization, not metric computation, so a version mismatch there is unlikely to be fatal. If `inference.py` throws an import or API-mismatch error against these pinned versions, check `inference/inference.py`'s actual import list in whatever commit you pinned in `docs/PROVENANCE.md` and record the fix in `docs/TROUBLESHOOTING.md`, since the public repo has evolved since these scripts were last touched.
 
 **wandb:** the script imports `wandb` but logging to a remote project isn't needed for this workflow. Run with `WANDB_MODE=disabled` (already set in `slurm/run_inference.sbatch`) so it initializes without requiring an account or network access.
+
+## Constraints found by reading `inference/inference.py`
+
+- **numpy<2:** it imports `numpy.core.numeric.False_`, which was removed in numpy 2.
+- **torch<2.6:** it calls `torch.load` without `weights_only=False`; torch 2.6 changed the default and rejects the checkpoint.
+- **Verified on PACE-ICE:** torch 2.2.2+cu121 imports in the `fourcastnet-inference` env. `scripts/smoke_test.py` enforces both pins.

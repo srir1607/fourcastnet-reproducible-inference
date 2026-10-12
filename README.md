@@ -2,119 +2,100 @@
 
 Sri Ravela | Reproducible Inference Assignment
 
-This repo runs single-GPU backbone inference with FourCastNet (NVIDIA's AFNO-based global weather model), validates the output against a standard meteorological skill threshold, and documents the full chain from checkpoint download to validated result. It builds directly on the Model Selection Report and GitHub issue from the previous assignment: [link your issue here].
+Single-GPU inference with FourCastNet (NVIDIA's AFNO-based global weather model) on PACE-ICE, with validation of the output and a documented chain from artifact download to result. It builds on the Model Selection Report and GitHub issue from the previous assignment: [PASTE ISSUE URL HERE].
 
-**Status note:** the files in this repo set up a complete, ready-to-run workflow. `logs/`, `outputs/`, and `docs/VALIDATION.md` are placeholders until an actual job has been run on PACE-ICE; see the "What's left to do" section at the bottom. Submitting this without running it will not satisfy the Execution Evidence or Validation rubric items, both of which require a real run's artifacts.
+## Scope (read this first)
 
-## What this reproduces
-
-Inference-only reproduction of the FourCastNet backbone: load the pretrained checkpoint, initialize from the released out-of-sample 2018 ERA5 data, run autoregressive rollout, and compute RMSE/ACC against ERA5 ground truth for Z500 (and the other channels `inference.py` scores by default). Training is explicitly out of scope; see `docs/PROVENANCE.md` for why.
+- **What is reproduced:** one autoregressive rollout of the pretrained backbone, initialized at index 0 of the released out-of-sample 2018 ERA5 file, run for 40 six-hour states (10 days), scored against ERA5 for 20 channels. Z500 (channel 14) is the headline variable.
+- **What is not:** this is a single-initialization sanity reproduction, not the paper's multi-initialization average, so numbers will be noisier than the paper's Figures 3/4. Compare curve shape, not digits. Training, the precipitation model, and the HuggingFace 26-channel release are out of scope (`docs/PROVENANCE.md`).
+- **Known limits of the evaluation file:** it holds 40 time steps, so the repo's default 41-step rollout would run off the end; `scripts/configure_paths.py` sets `prediction_length` from the file. The calendar dates of those 40 steps were not verified.
+- **Status:** see the checklist at the bottom. Items are only ticked once real logs are committed.
 
 ## Repo layout
 
 ```
-environment/        conda environment spec + notes on why versions deviate from the official Dockerfile
-scripts/             download, config-patching, smoke test, and validation scripts
-slurm/               the actual Slurm job script
-docs/                provenance, validation record template, troubleshooting log
-logs/                Slurm stdout/stderr and download manifest land here after a real run
-outputs/             copied-over result artifacts (plot, trimmed output file) after a real run
+environment/   conda spec + notes on why versions differ from the official Dockerfile
+scripts/       download, config patching, smoke test, validation
+slurm/         the job script
+docs/          provenance, checksums, validation record, troubleshooting + cleanup
+logs/          download manifest, Slurm stdout/stderr, config diff, GPU usage samples
+outputs/       skill plot from the real run
 ```
 
-## Setup
+## Reproduction steps (PACE-ICE)
 
-0. **SSH in and find your allocation.** `--account` in `slurm/run_inference.sbatch` is not optional and isn't the same for everyone:
-   ```
-   ssh <your-gt-username>@login-ice.pace.gatech.edu
-   sacctmgr show associations user=$USER
-   ```
-   Use whichever account that lists for GPU work, and put it in `slurm/run_inference.sbatch`. Don't assume a labmate's account (e.g. the `coc` account another student used for a different project) applies to you.
+Connect to the GT VPN, then `ssh <gt-username>@login-ice.pace.gatech.edu`.
 
-1. **Clone the model repo** (not this one; this repo wraps it):
-   ```
-   git clone https://github.com/NVlabs/FourCastNet.git
-   cd FourCastNet && git rev-parse HEAD
-   ```
-   Record that commit hash in `docs/PROVENANCE.md`.
+0. **Find your account.** `sacctmgr show associations user=$USER format=account,qos,partition` and put the account in `slurm/run_inference.sbatch` (`--account=`). This run used `coc` with partition `ice-gpu`.
 
-2. **Create the environment on scratch, not home.** PACE-ICE home quota is small and fills fast; put conda envs on scratch like everyone else in the lab does. Add this once to `~/.condarc` so `conda activate fourcastnet-inference` works by name afterward:
+1. **Clone both repos** (home is small, so put this repo on scratch):
+   ```
+   git clone https://github.com/NVlabs/FourCastNet.git ~/FourCastNet
+   git -C ~/FourCastNet rev-parse HEAD            # record in docs/PROVENANCE.md
+   git clone https://github.com/srir1607/fourcastnet-reproducible-inference.git ~/scratch/fcn-repro
+   ```
+
+2. **Create the environment on scratch.** Home quota is about 30 GB and fills quickly; `~/.condarc` must contain valid YAML:
    ```
    envs_dirs:
      - ~/scratch/.conda/envs
    ```
-   Then, on a login node:
    ```
-   module purge
-   module load miniforge
-   module load miniforge
-   module load miniforge      # 3x clears any stale conda module; not a typo
-   source $(conda info --base)/etc/profile.d/conda.sh
+   module purge; module load miniforge; module load miniforge; module load miniforge
+   source "$(conda info --base)/etc/profile.d/conda.sh"
    mamba env create -f environment/environment.yml -p ~/scratch/.conda/envs/fourcastnet-inference
    conda activate fourcastnet-inference
+   python -c "import torch; print(torch.__version__)"      # 2.2.2+cu121
    ```
-   See `environment/VERSION_NOTES.md` for why the package versions don't match the repo's own Dockerfile verbatim. Unlike OpenFold, this model needs no custom CUDA extension build, so there's no gcc-toolchain or CUTLASS step here; stock PyTorch wheels are enough.
+   Pins and rationale: `environment/environment.yml`, `environment/VERSION_NOTES.md`. In particular `numpy<2` and `torch<2.6` are required by `inference.py`.
 
-3. **Get a Globus account** (free, https://www.globus.org) if you don't have one, then:
+3. **Download and verify artifacts** (about 4 GB, plain HTTPS, no Globus):
    ```
-   pip install globus-cli
-   globus login
    ./scripts/download_artifacts.sh ~/scratch/fcn-artifacts
-   globus task list     # wait for all three transfers to show SUCCEEDED
+   ```
+   This resumes with `wget -c`, extracts, and checks every file against `docs/CHECKSUMS.sha256`, writing `logs/download_manifest.txt`. If the login node kills the transfer (exit 137), run the same script inside `srun --account=<acct> --partition=ice-gpu --gres=gpu:1 --time=01:00:00 --pty bash`.
+
+4. **Smoke test** (login node; no CUDA is expected there):
+   ```
+   python scripts/smoke_test.py --fourcastnet-repo ~/FourCastNet --artifact-root ~/scratch/fcn-artifacts
    ```
 
-4. **Smoke test on the login node first:**
+5. **CUDA check on a GPU node:**
    ```
-   python scripts/smoke_test.py \
-     --fourcastnet-repo ~/FourCastNet \
-     --artifact-root ~/scratch/fcn-artifacts
-   ```
-   Fix anything it flags. This catches the kind of mistake that otherwise costs a queued GPU job's wait time. It will correctly report no CUDA device here; that's expected on a login node.
-
-5. **Confirm CUDA actually works, on a short interactive allocation, before trusting the full batch job:**
-   ```
-   srun --account=<your account from step 0> --partition=ice-gpu --gres=gpu:1 \
-        --cpus-per-task=8 --mem=32G --time=00:15:00 --pty bash
+   srun --account=<acct> --partition=ice-gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=00:15:00 --pty bash
    conda activate fourcastnet-inference
    python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+   exit
    ```
-   This should print `True` and a real GPU name. If it doesn't, something is wrong with the PyTorch/CUDA pairing (see `environment/VERSION_NOTES.md`) and the batch job will fail the same way, just slower to find out. Exit the allocation (`exit`) once confirmed.
 
-## Running the workflow
+6. **Submit from the repo root** (paths in the script depend on this):
+   ```
+   cd ~/scratch/fcn-repro
+   sbatch slurm/run_inference.sbatch
+   squeue -u $USER
+   ```
+   The job patches `config/AFNO.yaml` (diff saved to `logs/config_patch.diff`), samples GPU memory to `logs/gpu_usage_<jobid>.csv`, runs `inference/inference.py --config=afno_backbone --run_num=0 --vis`, then runs `scripts/validate.py`. Logs: `logs/slurm-<jobid>.out/.err`. Plot: `outputs/skill_vs_leadtime.png`. The job exits non-zero if validation fails.
 
-Edit the three path variables at the top of `slurm/run_inference.sbatch` (your FourCastNet clone, your artifact root, and leave the output dir as-is unless you want it elsewhere) and `--account` (from step 0). `--partition=ice-gpu` is already filled in and confirmed working for GPU jobs on this cluster; re-check with `sinfo` only if the job is rejected.
+## Validation
 
-```
-sbatch slurm/run_inference.sbatch
-squeue -u $USER                      # watch it queue and run
-```
+`scripts/validate.py` (also runnable alone: `python scripts/validate.py --run-dir ~/scratch/fcn-run-<jobid>`):
 
-The job script patches `config/AFNO.yaml` via `scripts/configure_paths.py`, runs `inference/inference.py`, and then automatically runs `scripts/validate.py` on the result, all in one submission. Logs land in `logs/slurm-<jobid>.out` and `.err`.
+- Smoke: output HDF5 exists, has `rmse`/`acc`, finite and non-empty.
+- Substantive: ACC within [-1, 1], RMSE >= 0; ACC at lead 0 near 1 (confirms the first state is the initial condition); Z500 ACC at 24 h >= 0.6 (conventional useful-forecast threshold); ACC falls and RMSE rises with lead time.
 
-## Validating the result
+Measured numbers and interpretation go in `docs/VALIDATION.md`.
 
-`validate.py` runs automatically at the end of the Slurm job, but can be re-run standalone:
+## Troubleshooting and cleanup
 
-```
-python scripts/validate.py --run-dir ~/scratch/fcn-run-<jobid>
-```
+`docs/TROUBLESHOOTING.md` has the incidents hit while building this (with fixes) and the cleanup steps.
 
-It checks output structure (smoke test) and scientific plausibility (ACC bounds, RMSE non-negativity, Day-1 Z500 ACC against the standard 0.6 "useful forecast" threshold), and writes `skill_vs_leadtime.png` for the visual comparison against the paper's Figure 3/4. Fill in `docs/VALIDATION.md` with the actual numbers and your interpretation; a script's pass/fail output alone isn't the documentation the rubric is asking for.
+## Status checklist
 
-## Troubleshooting
-
-See `docs/TROUBLESHOOTING.md` for anticipated failure modes and a log of what actually went wrong during the real run.
-
-## Cleanup
-
-See the Cleanup section at the bottom of `docs/TROUBLESHOOTING.md`.
-
-## What's left to do (not yet done as of this commit)
-
-- [ ] Actually run `sbatch slurm/run_inference.sbatch` on PACE-ICE (the course's "AI Makerspace") and confirm it completes.
-- [ ] Copy `logs/slurm-<jobid>.out/.err` and `logs/download_manifest.txt` into `logs/`.
-- [ ] Copy the resulting `skill_vs_leadtime.png` and a trimmed output file into `outputs/`.
-- [ ] Fill in `docs/VALIDATION.md` with real measured numbers and the qualitative Figure 3/4 comparison.
-- [ ] Fill in the commit hash and checkpoint integrity check in `docs/PROVENANCE.md`.
-- [ ] Log any real incidents in `docs/TROUBLESHOOTING.md`.
-- [ ] Verify `--partition`/`--account` in `slurm/run_inference.sbatch` actually match PACE-ICE (they're currently placeholders).
-- [ ] Verify `DEFAULT_Z500_CHANNEL` in `scripts/validate.py` against the actual channel ordering in the pinned commit.
+- [x] Environment built and verified (torch 2.2.2+cu121)
+- [x] Artifacts downloaded and checksummed (`docs/CHECKSUMS.sha256`)
+- [x] Evaluation file shape measured: (40, 21, 721, 1440) float32
+- [ ] Smoke test output saved
+- [ ] CUDA check on GPU node
+- [ ] `sbatch` run completed, logs committed to `logs/`
+- [ ] `docs/VALIDATION.md` filled with measured numbers
+- [ ] FourCastNet commit hash recorded in `docs/PROVENANCE.md`

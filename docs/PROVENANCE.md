@@ -1,46 +1,34 @@
 # Provenance
 
-This document traces every artifact this workflow depends on: the model, its weights, the code that runs it, and the data it runs against. Everything here is pinned to a specific source and version so the run can be reproduced exactly, not approximately.
+Every artifact this workflow depends on, with source and version.
 
-## Model and architecture
+## Model
 
-- **Model:** FourCastNet, NVIDIA's Adaptive Fourier Neural Operator (AFNO) based global weather forecasting model.
-- **Paper:** Pathak et al., "FourCastNet: A Global Data-driven High-resolution Weather Model using Adaptive Fourier Neural Operators" (2022). https://arxiv.org/abs/2202.11214
-- **Architecture summary:** Vision-Transformer-style patch embedding (patch size 8) over a 720x1440 global grid (20 channels), with AFNO blocks (8 blocks, embedding width 56, 32 retained Fourier modes) replacing self-attention for near-linear-complexity spatial mixing. A separate head handles precipitation.
+- FourCastNet, NVIDIA's AFNO-based global weather model. Pathak et al., 2022, https://arxiv.org/abs/2202.11214
+- 20 prognostic channels on a 720x1440 grid; patch size 8, 8 AFNO blocks, embedding width 56.
 
-## Source repository
+## Code
 
-- **Repository:** https://github.com/NVlabs/FourCastNet
-- **Commit pinned for this workflow:** record the exact commit hash here after cloning, e.g. `git rev-parse HEAD` run right after clone. Do not leave this as "latest" once you've actually cloned it.
-- **License:** BSD 3-Clause (permissive, no academic-only or non-commercial restriction). See `LICENSE` in the repo.
-- **Scripts used:** `inference/inference.py` (backbone inference), `config/AFNO.yaml` (run configuration).
+- Repository: https://github.com/NVlabs/FourCastNet (BSD 3-Clause)
+- **Commit used:** `<FILL IN: output of git -C ~/FourCastNet rev-parse HEAD>` (also printed at the top of every Slurm log)
+- Scripts used: `inference/inference.py`, `config/AFNO.yaml` (section `afno_backbone`, patched by `scripts/configure_paths.py`; diff in `logs/config_patch.diff`)
+- Behaviors of `inference.py` that shaped this workflow: scores field `z500` only; uses `--vis` to run a single initial condition; imports `numpy.core.numeric.False_` (needs numpy<2); calls `torch.load` without `weights_only` (needs torch<2.6).
 
-## Checkpoint / weights
+## Data bundle
 
-- **Source:** `FCN_weights_v0/` at https://portal.nersc.gov/project/m4134/FCN_weights_v0/ (served via NERSC Globus)
-- **Files used:** `backbone.ckpt` (this workflow is inference-only against the backbone; `precip.ckpt` is out of scope here).
-- **Integrity check:** record the file size and, if available, a checksum for `backbone.ckpt` after download, in `logs/download_manifest.txt` (the download script writes this automatically).
-- **Important constraint:** the normalization statistics below must match this exact checkpoint release. Do not mix `stats_v0` with a different weights release.
+- **Source:** https://portal.nersc.gov/project/m4134/ccai_demo.tar (gzip-compressed tar, 3,998,497,644 bytes), published by the FourCastNet authors on NERSC.
+- **SHA-256 of the tar and of each file used:** `docs/CHECKSUMS.sha256` (measured after download; re-verified by `scripts/download_artifacts.sh`).
+- **Contents used (paths under `ccai_demo/`):**
+  - `model_weights/FCN_weights_v0/backbone.ckpt` (896,430,597 bytes). `precip.ckpt` is in the bundle but unused.
+  - `additional/stats_v0/{global_means,global_stds,time_means}.npy`. These must come from the same release as the checkpoint; do not recompute them.
+  - `data/FCN_ERA5_data_v0/out_of_sample/2018.h5`: dataset `fields`, shape (40, 21, 721, 1440), float32 (40 six-hour steps, about 3.5 GB). The model reads the first 20 channels and the first 720 latitude rows.
+- **Underlying data:** ERA5 reanalysis (ECMWF/Copernicus). This file is the authors' preprocessed out-of-sample subset; no raw ERA5 was downloaded. 2018 is outside the 1979-2015 training years, so the evaluation is out-of-sample. The calendar dates of the 40 steps were not verified.
 
-## Normalization statistics
+## Software environment
 
-- **Source:** `stats_v0/` folder, same NERSC Globus location as the weights.
-- **Files used:** `global_means.npy`, `global_stds.npy`, `time_means.npy`, `land_sea_mask.npy`, `latitude.npy`, `longitude.npy`.
+- PACE-ICE, `module load miniforge`, conda env `fourcastnet-inference` on scratch. Spec: `environment/environment.yml`; rationale: `environment/VERSION_NOTES.md`.
+- Verified: Python 3.10, torch 2.2.2+cu121.
 
-## Evaluation / input data
+## Out of scope
 
-- **Dataset:** ERA5 reanalysis, published by ECMWF/Copernicus.
-- **Primary access:** Copernicus Climate Data Store, https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels (requires free CDS account registration).
-- **Mirror used for this workflow:** the `out_of_sample/2018.h5` file at the same NERSC Globus endpoint as the weights, which is the out-of-sample 2018 ERA5 subset the FourCastNet authors packaged for inference testing. This is what the inference script expects by default.
-- **Scope:** this workflow runs inference against that pre-packaged out-of-sample file. It does not build a custom ERA5 slice from raw Copernicus netCDF, which the source repo supports separately via `copernicus/get_data_*.py` but which is out of scope for this assignment.
-
-## What is explicitly out of scope
-
-- Training reproduction (the original training run used a ~5TB ERA5 corpus on NERSC's Perlmutter HPC cluster; not attempted here).
-- The `precip.ckpt` precipitation head.
-- The HuggingFace `nvidia/fourcastnet1` checkpoint (26 channels, Apache 2.0) and the build.nvidia.com hosted inference API. Both are separate releases from the one used here (different channel count, different license) and are not interchangeable with the artifacts above.
-
-## Compute environment
-
-- **Platform:** PACE-ICE (the course calls this "AI Makerspace"), GT's Slurm-scheduled GPU cluster, login at login-ice.pace.gatech.edu.
-- **Base software environment:** adapted from the official FourCastNet Docker image (`nvcr.io/nvidia/pytorch:21.11-py3`); see `environment/environment.yml` for the pinned dependency list used in this workflow and why some package versions were updated from the original Docker image.
+Training; `precip.ckpt`; the HuggingFace `nvidia/fourcastnet1` (26 channels) and hosted APIs, which are different releases and not interchangeable with these files.

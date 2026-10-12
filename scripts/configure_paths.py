@@ -1,50 +1,64 @@
 #!/usr/bin/env python3
 """
-Patches config/AFNO.yaml (inside the cloned NVlabs/FourCastNet repo) with
-absolute paths to the downloaded artifacts, instead of hand-editing YAML.
+Patches config/AFNO.yaml (inside the cloned NVlabs/FourCastNet repo) so the
+`afno_backbone` section points at the downloaded bundle, instead of
+hand-editing YAML. It also sets prediction_length to match the evaluation
+file, because the repo's default (41 steps) is longer than the 40-step demo
+file and would run off the end of the data.
 
-This exists so the setup step is a single reproducible command rather than
-"open the file and edit six lines," which is exactly the kind of undocumented
-manual intervention the rubric's Environment & Setup criterion penalizes.
+The patch is applied to the clone in place; the job script saves
+`git diff config/AFNO.yaml` into logs/ so the exact change is on record.
 
 Usage:
-    python configure_paths.py \
-        --fourcastnet-repo /path/to/cloned/FourCastNet \
-        --artifact-root /path/to/artifacts/root \
-        --output-dir /path/to/run/output
-
-This only touches the `afno_backbone` section, since this workflow is
-backbone-only inference (see docs/PROVENANCE.md for why precip is out of scope).
+    python scripts/configure_paths.py \
+        --fourcastnet-repo ~/FourCastNet \
+        --artifact-root ~/scratch/fcn-artifacts
 """
 import argparse
 import os
 import sys
 
 try:
+    import h5py
     from ruamel.yaml import YAML
-except ImportError:
-    sys.exit("ruamel.yaml not installed. Activate the fourcastnet-inference conda env first.")
+except ImportError as e:
+    sys.exit(f"Missing dependency ({e}). Activate the fourcastnet-inference conda env first.")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fourcastnet-repo", required=True, help="Path to cloned NVlabs/FourCastNet repo")
-    ap.add_argument("--artifact-root", required=True, help="Path containing weights/, stats/, out_of_sample/")
-    ap.add_argument("--output-dir", required=True, help="Where inference.py should write results")
+    ap.add_argument("--artifact-root", required=True,
+                    help="Directory containing the extracted ccai_demo/ folder")
+    ap.add_argument("--prediction-length", type=int, default=None,
+                    help="Number of states in the rollout, including the initial one. "
+                         "Default: every time step in the evaluation file.")
     args = ap.parse_args()
 
     config_path = os.path.join(args.fourcastnet_repo, "config", "AFNO.yaml")
-    if not os.path.isfile(config_path):
-        sys.exit(f"Could not find {config_path}. Check --fourcastnet-repo.")
+    bundle = os.path.join(args.artifact_root, "ccai_demo")
+    stats = os.path.join(bundle, "additional", "stats_v0")
+    inf_dir = os.path.join(bundle, "data", "FCN_ERA5_data_v0", "out_of_sample")
+    data_file = os.path.join(inf_dir, "2018.h5")
+    weights = os.path.join(bundle, "model_weights", "FCN_weights_v0", "backbone.ckpt")
 
-    weights = os.path.join(args.artifact_root, "weights", "backbone.ckpt")
-    stats = os.path.join(args.artifact_root, "stats")
-    inf_data = os.path.join(args.artifact_root, "out_of_sample")
+    required = [config_path, weights, data_file] + [
+        os.path.join(stats, f) for f in ("time_means.npy", "global_means.npy", "global_stds.npy")
+    ]
+    missing = [p for p in required if not os.path.isfile(p)]
+    if missing:
+        sys.exit("Missing required file(s):\n  " + "\n  ".join(missing)
+                 + "\nRun scripts/download_artifacts.sh first.")
 
-    for p in (weights, stats, inf_data):
-        if not os.path.exists(p):
-            print(f"WARNING: expected path does not exist yet: {p}", file=sys.stderr)
-            print("Run scripts/download_artifacts.sh first if this is unexpected.", file=sys.stderr)
+    with h5py.File(data_file, "r") as f:
+        n_steps, n_ch, n_lat, n_lon = f["fields"].shape
+    print(f"Evaluation file shape: steps={n_steps}, channels={n_ch}, lat={n_lat}, lon={n_lon}")
+    if n_ch < 20 or n_lat < 720 or n_lon != 1440:
+        sys.exit("Unexpected data shape: the model reads the first 20 channels on a 720x1440 grid.")
+
+    pred_len = args.prediction_length or n_steps
+    if pred_len > n_steps:
+        sys.exit(f"--prediction-length {pred_len} exceeds the {n_steps} steps in the data file.")
 
     yaml = YAML()
     yaml.preserve_quotes = True
@@ -54,23 +68,21 @@ def main():
     backbone = cfg["afno_backbone"]
     backbone["orography"] = False
     backbone["orography_path"] = None
-    backbone["inf_data_path"] = inf_data
+    backbone["inf_data_path"] = inf_dir
     backbone["time_means_path"] = os.path.join(stats, "time_means.npy")
     backbone["global_means_path"] = os.path.join(stats, "global_means.npy")
     backbone["global_stds_path"] = os.path.join(stats, "global_stds.npy")
-
-    os.makedirs(args.output_dir, exist_ok=True)
+    backbone["prediction_length"] = pred_len
+    backbone["log_to_wandb"] = False
 
     with open(config_path, "w") as f:
         yaml.dump(cfg, f)
 
     print(f"Patched {config_path}:")
-    print(f"  inf_data_path      = {inf_data}")
-    print(f"  time_means_path    = {backbone['time_means_path']}")
-    print(f"  global_means_path  = {backbone['global_means_path']}")
-    print(f"  global_stds_path   = {backbone['global_stds_path']}")
-    print(f"Weights checkpoint (pass separately to inference.py --weights): {weights}")
-    print(f"Output directory (pass as --override_dir): {args.output_dir}")
+    for k in ("inf_data_path", "time_means_path", "global_means_path", "global_stds_path",
+              "prediction_length", "log_to_wandb"):
+        print(f"  {k} = {backbone[k]}")
+    print(f"Checkpoint to pass to inference.py --weights: {weights}")
 
 
 if __name__ == "__main__":

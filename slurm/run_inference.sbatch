@@ -1,65 +1,84 @@
 #!/bin/bash
 #SBATCH --job-name=fcn-inference
-#SBATCH --partition=ice-gpu                          # confirmed real PACE-ICE partition name; re-check with `sinfo` if it rejects
-#SBATCH --account=REPLACE_WITH_YOUR_ACCOUNT          # find yours: sacctmgr show associations user=$USER
-#SBATCH --gres=gpu:1                                 # any GPU type is enough for this model; add a type e.g. gpu:h200:1 only if the partition requires it (see `sinfo -o "%P %G"`)
+#SBATCH --partition=ice-gpu
+#SBATCH --account=coc                                  # find yours: sacctmgr show associations user=$USER
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=00:30:00                              # measured runtime should be well under this; see README
-#SBATCH --output=../logs/slurm-%j.out
-#SBATCH --error=../logs/slurm-%j.err
+#SBATCH --mem=64G
+#SBATCH --time=00:45:00
+#SBATCH --output=logs/slurm-%j.out
+#SBATCH --error=logs/slurm-%j.err
 
 # ---------------------------------------------------------------------------
-# Single-GPU backbone inference for FourCastNet, inference-only reproduction.
-# Resource requests here are sized from the Model Selection Report's analysis
-# of the released config (patch_size 8, embed width 56, 8 AFNO blocks):
-# ~2-4 GB GPU memory, under an hour of GPU time for a full evaluation sweep.
-# This script runs one initialization; loop over --run_num for a sweep.
+# Single-GPU FourCastNet backbone inference + validation.
+# SUBMIT FROM THE REPO ROOT:   cd ~/scratch/fcn-repro && sbatch slurm/run_inference.sbatch
+# (Slurm copies this script to a spool dir, so paths are built from
+#  $SLURM_SUBMIT_DIR, never from $0; --output paths are relative to the submit dir.)
+#
+# What runs: one rollout starting at index 0 of the 2018 out-of-sample file
+# (--vis makes inference.py use a single initial condition), 40 six-hour states.
+# Note: no `set -u`, because conda's activate scripts reference unset variables.
 # ---------------------------------------------------------------------------
 
-set -euo pipefail
+set -eo pipefail
 
-# --- EDIT THESE THREE PATHS FOR YOUR ENVIRONMENT ---
-FOURCASTNET_REPO="$HOME/FourCastNet"                 # where you cloned NVlabs/FourCastNet
-ARTIFACT_ROOT="$HOME/scratch/fcn-artifacts"           # output of download_artifacts.sh
+REPO="$SLURM_SUBMIT_DIR"
+FOURCASTNET_REPO="${FOURCASTNET_REPO:-$HOME/FourCastNet}"
+ARTIFACT_ROOT="${ARTIFACT_ROOT:-$HOME/scratch/fcn-artifacts}"
 OUTPUT_DIR="$HOME/scratch/fcn-run-$SLURM_JOB_ID"
-# ----------------------------------------------------
+mkdir -p "$OUTPUT_DIR" "$REPO/logs" "$REPO/outputs"
 
 module purge
 module load miniforge
 module load miniforge
-module load miniforge      # loading 3x clears any other conda module first; a known PACE-ICE quirk, not a typo
-source $(conda info --base)/etc/profile.d/conda.sh
-
+module load miniforge      # repeated on PACE-ICE to override the default anaconda module
+source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate fourcastnet-inference
 
 export WANDB_MODE=disabled
 export PYTHONUNBUFFERED=1
+export PYTHONPATH="$FOURCASTNET_REPO:${PYTHONPATH:-}"
 
-echo "=== Job $SLURM_JOB_ID starting on $(hostname) at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
-echo "=== GPU visible to job: ==="
-nvidia-smi --query-gpu=name,memory.total,memory.used --format=csv
+echo "=== Job $SLURM_JOB_ID on $(hostname) at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+echo "repo commit (this repo):        $(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "repo commit (FourCastNet):      $(git -C "$FOURCASTNET_REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+python -c "import torch,numpy; print('torch',torch.__version__,'numpy',numpy.__version__,'cuda',torch.cuda.is_available())"
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 
-cd "$FOURCASTNET_REPO"
-
-python "$(dirname "$0")/../scripts/configure_paths.py" \
+python "$REPO/scripts/configure_paths.py" \
   --fourcastnet-repo "$FOURCASTNET_REPO" \
-  --artifact-root "$ARTIFACT_ROOT" \
-  --output-dir "$OUTPUT_DIR"
+  --artifact-root "$ARTIFACT_ROOT"
+git -C "$FOURCASTNET_REPO" diff config/AFNO.yaml > "$REPO/logs/config_patch.diff" || true
+
+# Sample GPU memory/utilization twice a second for the whole run.
+GPU_CSV="$REPO/logs/gpu_usage_$SLURM_JOB_ID.csv"
+nvidia-smi --query-gpu=timestamp,memory.used,utilization.gpu --format=csv -lms 500 > "$GPU_CSV" &
+SMI_PID=$!
 
 echo "=== Running inference ==="
+START=$(date +%s)
+cd "$FOURCASTNET_REPO"
 python inference/inference.py \
   --config=afno_backbone \
   --run_num=0 \
-  --weights "$ARTIFACT_ROOT/weights/backbone.ckpt" \
-  --override_dir "$OUTPUT_DIR"
+  --weights "$ARTIFACT_ROOT/ccai_demo/model_weights/FCN_weights_v0/backbone.ckpt" \
+  --override_dir "$OUTPUT_DIR" \
+  --vis
+END=$(date +%s)
+kill "$SMI_PID" 2>/dev/null || true
+cd "$REPO"
 
-echo "=== Inference finished at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
-echo "=== Peak GPU memory used: ==="
-nvidia-smi --query-gpu=memory.used --format=csv
-
-echo "=== Output files written: ==="
+echo "=== Inference wall time: $((END-START)) s ==="
+awk -F', ' 'NR>1 {gsub(/ MiB/,"",$2); if ($2+0>m) m=$2+0} END {print "=== Peak GPU memory: " m " MiB ==="}' "$GPU_CSV"
+echo "=== Output files ==="
 ls -la "$OUTPUT_DIR"
 
-echo "=== Running validation ==="
-python "$(dirname "$0")/../scripts/validate.py" --run-dir "$OUTPUT_DIR"
+echo "=== Validation ==="
+set +e
+python "$REPO/scripts/validate.py" --run-dir "$OUTPUT_DIR" --plot-out "$REPO/outputs/skill_vs_leadtime.png"
+RC=$?
+set -e
+
+cp "$OUTPUT_DIR"/autoregressive_predictions*.h5 "$REPO/outputs/" 2>/dev/null || true
+echo "=== Done (validation exit code $RC) at $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+exit $RC

@@ -1,35 +1,38 @@
 # Validation record
 
-Fill this in after an actual run. `scripts/validate.py` prints most of these numbers; this file is where you record them alongside your interpretation, which the rubric specifically asks for ("sufficient explanation of why the output is valid," not just a pasted number).
+Fill this in from the real run's `logs/slurm-<jobid>.out`. A script's pass/fail line alone is not the explanation the rubric asks for.
 
-## Smoke test
+Run: job ID `<FILL>`, node `<FILL>`, GPU `<FILL>`, wall time `<FILL>` s, peak GPU memory `<FILL>` MiB (from `logs/gpu_usage_<jobid>.csv`).
+
+## Smoke tests
 
 | Check | Result |
 |---|---|
-| Output HDF5 file found | pass / fail |
-| Expected datasets present (`rmse`, `acc`) | pass / fail |
-| No NaN/Inf in output arrays | pass / fail |
+| Pre-flight `scripts/smoke_test.py` (imports, version guards, artifacts, shape) | |
+| CUDA visible on GPU node | |
+| Output HDF5 found, has `rmse` and `acc` | |
+| Output arrays finite and non-empty | |
 
-## Substantive validation
+Detected array layout printed by validate.py: `<FILL>`
+
+## Substantive checks (Z500, channel 14)
 
 | Check | Expected | Measured | Pass/fail |
 |---|---|---|---|
 | ACC within [-1, 1] | by definition | | |
-| RMSE non-negative | by definition | | |
-| Day-1 Z500 ACC vs. skill threshold | ACC >= 0.6 (conventional "useful forecast" threshold in synoptic-scale NWP verification, see note below) | | |
+| RMSE >= 0 | by definition | | |
+| ACC at lead 0 | about 1 (>= 0.99), confirms index 0 is the initial condition | | |
+| ACC at 24 h | >= 0.6 | | |
+| ACC decays, RMSE grows with lead time | ACC(24 h) > ACC(last), RMSE(last) > RMSE(24 h) | | |
 
-**Why 0.6:** an anomaly correlation coefficient of 0.6 is the long-standing operational threshold meteorologists use to call a synoptic-scale forecast "useful" rather than noise; it predates FourCastNet and isn't a paper-specific number, it's a standard verification convention. If the measured Day-1 Z500 ACC clears it, that's independent evidence the forecast is doing something real, not just an artifact of the pipeline running without crashing.
+Skill summary (copy from the log): ACC / RMSE at 24, 48, 72, 120, 240 h: `<FILL>`
 
-## Qualitative comparison against the paper
+**Why 0.6:** an anomaly correlation of 0.6 is the long-standing operational convention for calling a synoptic-scale forecast useful rather than noise. It is a verification standard, not a number from the FourCastNet paper. These checks catch the common failure modes (wrong stats files, wrong channel, normalization bug, broken checkpoint load) but they cannot prove digit-level agreement with the paper.
 
-Open `<run_dir>/skill_vs_leadtime.png` next to Figure 3 (RMSE) and Figure 4 (ACC) of Pathak et al. 2022 (https://arxiv.org/abs/2202.11214) and describe what you see:
+## Comparison with the paper
 
-- Does ACC decrease with lead time in both, at a roughly similar rate?
-- Does RMSE increase with lead time in both?
-- Where do they diverge, and is that divergence explainable (different GPU/cuFFT numerics, a single initialization vs. the paper's full out-of-sample average, etc.) per the Risks section of the Model Selection Report?
+Put `outputs/skill_vs_leadtime.png` next to Figures 3 (RMSE) and 4 (ACC) of Pathak et al. and write 3 to 5 sentences: does ACC fall and RMSE rise with lead time at a broadly similar rate, where do they differ, and is the difference explained by a single initialization versus the paper's average over many, or by GPU numerics.
 
-(Write 3-5 sentences here after the run. Don't claim digit-for-digit agreement; the Model Selection Report already scoped this to shape/ordering agreement, not exact reproduction.)
+## Verdict
 
-## Overall verdict
-
-State plainly: did this run produce a valid, working FourCastNet inference pipeline? What would someone need to change to trust these numbers more (more initializations, the full out-of-sample average instead of one date, etc.)?
+State plainly whether the pipeline produced a valid, working forecast, and what would increase trust: more initializations, a longer evaluation set, a second run on a different GPU to measure run-to-run numerical drift.

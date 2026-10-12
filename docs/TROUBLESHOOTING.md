@@ -1,27 +1,32 @@
 # Troubleshooting
 
-Known risks, carried over from the Model Selection Report's Risks section, plus space to log what actually happened. Update this file with real entries once you run the job; a generic risk list without an actual-incident log is exactly what the rubric's "Significant Gaps" tier for Execution Evidence describes.
+## Incidents actually hit while building this workflow (2026-10-12)
 
-## Known risks (anticipated before running)
+| What happened | Diagnosis | Fix |
+|---|---|---|
+| `module load miniforge` printed a conda `ParserError` pointing at `~/.condarc` line 2 | Config file had been appended to with malformed YAML | Backed it up, rewrote it with `>` (not `>>`) as a single valid `envs_dirs:` block |
+| `wget` of `ccai_demo.tar` died at about 95% with `Exit 137` | Login node killed a long, heavy process (SIGKILL) | Resumed with `wget -c`; for repeat failures run the download in an `srun` session |
+| Home directory at 97% of its 30 GB quota during env build | `du`/quota output; pip and conda caches in home | `pip cache purge` and `conda clean --all -y` freed about 7 GB; env and artifacts live on scratch |
+| `tar -tv ccai_demo.tar` errored | The archive is gzip-compressed | Use `tar -tzf` / `tar -xzf` |
+| My first plan assumed Globus transfers and a different bundle layout | Listing the NERSC portal and the tar showed the real layout (`ccai_demo/...`) and that plain HTTPS works | Rewrote `download_artifacts.sh` and all paths; added checksums |
+| Default config would run off the end of the data | Measured `2018.h5` has 40 steps while `AFNO.yaml` defaults to 41 | `configure_paths.py` sets `prediction_length` from the data shape |
 
-**Globus/CDS account friction.** Both require account setup with variable turnaround. If `download_artifacts.sh` hangs or fails authentication, check `globus login` was completed interactively first; it cannot be scripted.
+Job-script pitfalls found by review before the first submission (fixed in `slurm/run_inference.sbatch`): `$0` inside a Slurm job is a spool copy, so paths come from `$SLURM_SUBMIT_DIR`; relative `#SBATCH --output` is relative to the submit directory, so submit from the repo root; `set -u` breaks `conda activate`.
 
-**Normalization/variable-selection mismatch.** The released `stats_v0` files must be used as-is, not recomputed. If `scripts/validate.py`'s ACC bounds check fails (values outside [-1, 1] or implausibly low), check first that `configure_paths.py` pointed at the stats that shipped with this exact checkpoint release, not a mismatched set.
+Add any further incidents from the real `sbatch` run here.
 
-**Numerical drift from GPU/cuFFT version differences.** Don't expect digit-for-digit agreement with the paper. Compare the shape of the measured skill curve (`skill_vs_leadtime.png`), not exact values.
+## Known risks
 
-**PACE-ICE job caps.** At the time of the Model Selection Report, the known cap was 50 queued/running GPU jobs and 32 concurrent GPU-hours per user. This run's estimated usage (well under an hour) is far inside both; a larger multi-seed sweep later would need to be sequenced.
-
-**Old base image vs. new GPU generation.** See `environment/VERSION_NOTES.md`: the official Dockerfile's PyTorch/CUDA pairing predates Hopper (H200) support, which is why `environment.yml` pins newer versions instead of reproducing the Dockerfile verbatim.
-
-## Actual incidents (fill in during/after the real run)
-
-| Date | What happened | How it was diagnosed | Fix / workaround |
-|---|---|---|---|
-| | | | |
+- **Stats/checkpoint mismatch:** use `stats_v0` exactly as shipped. If ACC is out of [-1, 1] or very low at 24 h, check this first.
+- **Version drift:** `inference.py` needs numpy<2 and torch<2.6; `smoke_test.py` checks both.
+- **Numerical differences:** different GPUs and cuFFT versions will not reproduce the paper to the digit. Compare curve shape.
+- **Job limits:** PACE-ICE caps roughly 50 GPU jobs and 32 GPU-hours per user; this run uses well under an hour.
+- **Old Docker base image:** the official image predates Hopper GPUs, which is why the environment pins newer wheels (`environment/VERSION_NOTES.md`).
+- **Unverified before the first run:** the exact array layout `inference.py` writes (validate.py detects it and prints it) and the `--vis` option's memory use.
 
 ## Cleanup
 
-- Remove the `$OUTPUT_DIR` scratch directory from `slurm/run_inference.sbatch` once results are copied into `outputs/` and no longer needed on scratch (scratch storage on most Slurm clusters is not backed up and may be purged automatically).
-- Downloaded artifacts in `$ARTIFACT_ROOT` can be deleted and re-fetched later via `scripts/download_artifacts.sh`; they aren't committed to this repo (see README's note on large files).
-- `conda env remove -n fourcastnet-inference` if you want to fully tear down the environment.
+- Per-run output on scratch: `rm -rf ~/scratch/fcn-run-<jobid>` after the plot and logs are copied into this repo.
+- Artifacts: `rm -rf ~/scratch/fcn-artifacts` (re-fetch with `scripts/download_artifacts.sh`). They are not committed.
+- Environment: `conda env remove -p ~/scratch/.conda/envs/fourcastnet-inference`.
+- Caches: `pip cache purge; conda clean --all -y` to protect the home quota.
