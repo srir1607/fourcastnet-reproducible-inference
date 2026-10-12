@@ -7,7 +7,7 @@ Single-GPU inference with FourCastNet (NVIDIA's AFNO-based global weather model)
 ## Scope
 
 - **What is reproduced:** one autoregressive rollout of the pretrained backbone, initialized at index 0 of the released out-of-sample 2018 ERA5 file, run for 40 six-hour states (10 days), scored against ERA5 for 20 channels. Z500 (channel 14) is the headline variable.
-- **What is not:** this is a single-initialization sanity reproduction, not the paper's multi-initialization average, so numbers will be noisier than the paper's Figures 3/4. Compare curve shape, not digits. Training, the precipitation model, and the HuggingFace 26-channel release are out of scope (`docs/PROVENANCE.md`).
+- **What is not:** this is a single-initialization sanity reproduction, not the paper's multi-initialization average, so numbers will be noisier than the paper's Figure 7(a). Compare curve shape, not digits. Training, the precipitation model, and the HuggingFace 26-channel release are out of scope (`docs/PROVENANCE.md`).
 - **Compute needed:** one GPU with at least 16 GB (measured peak 11.3 GiB with `--vis`), 64 GB host RAM requested (21.7 GB used), about 95 s wall time on a V100.
 - **Known limits of the evaluation file:** it holds 40 time steps, so the repo's default 41-step rollout would run off the end; `scripts/configure_paths.py` sets `prediction_length` from the file. The calendar dates of those 40 steps were not verified.
 - **Status:** see the checklist at the bottom. Items are only ticked once real logs are committed.
