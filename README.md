@@ -14,7 +14,7 @@ With a single initialization, my numbers are noisier than an average over many, 
 
 ## What it takes to run
 
-The job needs one GPU with at least 16 GB. Peak GPU memory was 11.3 GiB with `--vis`, host RAM used was 21.7 GB (I requested 64 GB), and the job took about 95 seconds on a V100. The evaluation file holds 40 time steps, so the repo's default 41-step rollout would run off the end. `scripts/configure_paths.py` sets `prediction_length` from the file to avoid that. I didn't verify the calendar dates of those 40 steps.
+The job needs one GPU with at least 16 GB. Peak GPU memory was 11.3 GiB with `--vis`, host RAM used was 21.7 GB (I requested 64 GB), and the job took about 95 seconds on a V100. The evaluation file holds 40 time steps, so the repo's default 41-step rollout would run off the end. `scripts/configure_paths.py` sets `prediction_length` from the file to avoid that. I didn't verify the calendar dates of those 40 steps. My Model Selection Report estimated 2 to 4 GB of GPU memory and a 5 to 7 day forecast, so I measured both: the real peak was 11.3 GiB, and the evaluation file I used gives a 10-day window.
 
 ## Repo layout
 
