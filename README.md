@@ -4,7 +4,7 @@ Sri Ravela | Reproducible Inference Assignment
 
 Single-GPU inference with FourCastNet (NVIDIA's AFNO-based global weather model) on PACE-ICE, with validation of the output and a documented chain from artifact download to result. It builds on the Model Selection Report and GitHub issue from the previous assignment: [PASTE ISSUE URL HERE].
 
-## Scope (read this first)
+## Scope
 
 - **What is reproduced:** one autoregressive rollout of the pretrained backbone, initialized at index 0 of the released out-of-sample 2018 ERA5 file, run for 40 six-hour states (10 days), scored against ERA5 for 20 channels. Z500 (channel 14) is the headline variable.
 - **What is not:** this is a single-initialization sanity reproduction, not the paper's multi-initialization average, so numbers will be noisier than the paper's Figures 3/4. Compare curve shape, not digits. Training, the precipitation model, and the HuggingFace 26-channel release are out of scope (`docs/PROVENANCE.md`).
