@@ -34,7 +34,7 @@ COMPARISON TO FILL IN: look at the two figures side by side and add two or three
 
 ## Repeatability
 
-REPEAT RUN TO FILL IN: job ID of the second run, and the output of `scripts/compare_runs.py` between the two CSVs.
+A second run (job 6205661, same node and GPU, 52 s of walltime) was compared to job 6205007 with `scripts/compare_runs.py outputs/z500_skill_6205007.csv outputs/z500_skill_6205661.csv`. Over all 40 steps the maximum absolute difference was 0.000e+00 for both ACC and RMSE, so the pipeline is deterministic on this hardware. Both jobs used the same node and GPU, so this does not measure drift between different GPU types or cuFFT versions.
 
 ## Verdict
 
